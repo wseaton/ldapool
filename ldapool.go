@@ -18,39 +18,45 @@ type LdapConfig struct {
 }
 
 // Connection pool
-type LdapConnPool struct {
+type ldapConnPool struct {
 	mu       sync.Mutex
 	conns    []*ldap.Conn
 	reqConns map[uint64]chan *ldap.Conn
 	openConn int
 	maxOpen  int
 	DsName   string
+	config   LdapConfig
 }
 
 type LdapPoolManager struct {
-	ldapool     *LdapConnPool
+	ldapool     *ldapConnPool
 	ldapInit    bool
 	ldapInitOne sync.Once
 	closed      bool
+	config      LdapConfig
 }
 
 // NewLdapPoolManager creates a new instance of LdapPoolManager
-func NewLdapPoolManager() *LdapPoolManager {
-	return &LdapPoolManager{}
-}
-func (manager *LdapPoolManager) Open(conf LdapConfig) (*ldap.Conn, error) {
-	// Initialize the connection first
-	manager.InitLDAP(conf)
-	// Get LDAP connection
-	conn, err := manager.GetLDAPConn(conf)
+func NewLdapPoolManager(conf LdapConfig) (*LdapPoolManager, error) {
+	manager := &LdapPoolManager{
+		config: conf,
+	}
+	err := manager.initLDAP()
 	if err != nil {
 		return nil, err
 	}
-	return conn, nil
+	return manager, nil
+}
+
+func (manager *LdapPoolManager) Open() (*ldap.Conn, error) {
+	if !manager.ldapInit {
+		return nil, fmt.Errorf("LDAP connection is not initialized")
+	}
+	return manager.GetConn()
 }
 
 // Initialize connection
-func (manager *LdapPoolManager) InitLDAP(conf LdapConfig) error {
+func (manager *LdapPoolManager) initLDAP() error {
 	if manager.ldapInit {
 		return nil
 	}
@@ -59,19 +65,20 @@ func (manager *LdapPoolManager) InitLDAP(conf LdapConfig) error {
 		manager.ldapInit = true
 	})
 
-	ldapConn, err := ldap.DialURL(conf.Url, ldap.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}))
+	ldapConn, err := ldap.DialURL(manager.config.Url, ldap.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}))
 	if err != nil {
 		return fmt.Errorf("init LDAP connection failed: %v", err)
 	}
 
 	// Global variable assignment
-	manager.ldapool = &LdapConnPool{
+	manager.ldapool = &ldapConnPool{
 		conns:    make([]*ldap.Conn, 0),
 		reqConns: make(map[uint64]chan *ldap.Conn),
 		openConn: 0,
-		maxOpen:  conf.MaxOpen,
+		maxOpen:  manager.config.MaxOpen,
+		config:   manager.config,
 	}
-	manager.PutLDAPConn(ldapConn)
+	manager.PutConn(ldapConn)
 	return nil
 }
 
@@ -96,18 +103,18 @@ func (manager *LdapPoolManager) IsClosed() bool {
 	return manager.closed
 }
 
-// GetLDAPConn Get LDAP connection
-func (manager *LdapPoolManager) GetLDAPConn(conf LdapConfig) (*ldap.Conn, error) {
-	return manager.ldapool.GetConnection(conf)
+// GetConn Get LDAP connection
+func (manager *LdapPoolManager) GetConn() (*ldap.Conn, error) {
+	return manager.ldapool.getConnection()
 }
 
-// PutLDAPConn Put back the LDAP connection
-func (manager *LdapPoolManager) PutLDAPConn(conn *ldap.Conn) {
-	manager.ldapool.PutConnection(conn)
+// PutConn Put back the LDAP connection
+func (manager *LdapPoolManager) PutConn(conn *ldap.Conn) {
+	manager.ldapool.putConnection(conn)
 }
 
-// GetConnection
-func (lcp *LdapConnPool) GetConnection(conf LdapConfig) (*ldap.Conn, error) {
+// getConnection
+func (lcp *ldapConnPool) getConnection() (*ldap.Conn, error) {
 	lcp.mu.Lock()
 	// Determine whether there is a connection in the current connection pool
 	connNum := len(lcp.conns)
@@ -120,7 +127,7 @@ func (lcp *LdapConnPool) GetConnection(conf LdapConfig) (*ldap.Conn, error) {
 		lcp.mu.Unlock()
 		// If the connection has been closed, get the connection again
 		if conn.IsClosing() {
-			return initLDAPConn(conf)
+			return initLDAPConn(lcp.config)
 		}
 		return conn, nil
 	}
@@ -138,11 +145,11 @@ func (lcp *LdapConnPool) GetConnection(conf LdapConfig) (*ldap.Conn, error) {
 	} else {
 		lcp.openConn++
 		lcp.mu.Unlock()
-		return initLDAPConn(conf)
+		return initLDAPConn(lcp.config)
 	}
 }
 
-func (lcp *LdapConnPool) PutConnection(conn *ldap.Conn) {
+func (lcp *ldapConnPool) putConnection(conn *ldap.Conn) {
 	lcp.mu.Lock()
 	defer lcp.mu.Unlock()
 
@@ -165,7 +172,7 @@ func (lcp *LdapConnPool) PutConnection(conn *ldap.Conn) {
 }
 
 // nextRequestKeyLocked Get the next request token
-func (lcp *LdapConnPool) nextRequestKeyLocked() uint64 {
+func (lcp *ldapConnPool) nextRequestKeyLocked() uint64 {
 	for {
 		reqKey := rand.Uint64()
 		if _, ok := lcp.reqConns[reqKey]; !ok {
