@@ -1,4 +1,4 @@
-module github.com/eryajf/ldapool
+module github.com/wseaton/ldapool
 
 go 1.17
 
