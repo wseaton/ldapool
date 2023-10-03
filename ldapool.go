@@ -31,16 +31,18 @@ type LdapPoolManager struct {
 	ldapool     *LdapConnPool
 	ldapInit    bool
 	ldapInitOne sync.Once
+	closed      bool
 }
 
-var ldapManager = &LdapPoolManager{}
-
-func Open(conf LdapConfig) (*ldap.Conn, error) {
+// NewLdapPoolManager creates a new instance of LdapPoolManager
+func NewLdapPoolManager() *LdapPoolManager {
+	return &LdapPoolManager{}
+}
+func (manager *LdapPoolManager) Open(conf LdapConfig) (*ldap.Conn, error) {
 	// Initialize the connection first
-	ldapManager.InitLDAP(conf)
+	manager.InitLDAP(conf)
 	// Get LDAP connection
-	conn, err := ldapManager.GetLDAPConn(conf)
-	defer ldapManager.PutLDAPConn(conn)
+	conn, err := manager.GetLDAPConn(conf)
 	if err != nil {
 		return nil, err
 	}
@@ -48,9 +50,9 @@ func Open(conf LdapConfig) (*ldap.Conn, error) {
 }
 
 // Initialize connection
-func (manager *LdapPoolManager) InitLDAP(conf LdapConfig) {
+func (manager *LdapPoolManager) InitLDAP(conf LdapConfig) error {
 	if manager.ldapInit {
-		return
+		return nil
 	}
 
 	manager.ldapInitOne.Do(func() {
@@ -59,7 +61,7 @@ func (manager *LdapPoolManager) InitLDAP(conf LdapConfig) {
 
 	ldapConn, err := ldap.DialURL(conf.Url, ldap.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}))
 	if err != nil {
-		panic(fmt.Sprintf("Init Ldap Connection Failed: %v", err))
+		return fmt.Errorf("init LDAP connection failed: %v", err)
 	}
 
 	// Global variable assignment
@@ -70,6 +72,28 @@ func (manager *LdapPoolManager) InitLDAP(conf LdapConfig) {
 		maxOpen:  conf.MaxOpen,
 	}
 	manager.PutLDAPConn(ldapConn)
+	return nil
+}
+
+// Close all connections in the pool
+func (manager *LdapPoolManager) Close() {
+	manager.ldapool.mu.Lock()
+	defer manager.ldapool.mu.Unlock()
+
+	for _, conn := range manager.ldapool.conns {
+		conn.Close()
+	}
+	manager.ldapool.conns = nil
+	manager.ldapool.reqConns = nil
+	manager.closed = true
+}
+
+// IsClosed checks if the manager has been closed
+func (manager *LdapPoolManager) IsClosed() bool {
+	manager.ldapool.mu.Lock()
+	defer manager.ldapool.mu.Unlock()
+
+	return manager.closed
 }
 
 // GetLDAPConn Get LDAP connection
