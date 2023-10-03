@@ -17,10 +17,6 @@ type LdapConfig struct {
 	// ldap server base DN. eg: dc=eryajf,dc=net
 	BaseDN string
 	// ldap server admin DN. eg: cn=admin,dc=eryajf,dc=net
-	AdminDN string
-	// ldap server admin Pass.
-	AdminPass string
-	// ldap maximum number of connections
 	MaxOpen int
 }
 
@@ -63,10 +59,6 @@ func InitLDAP(conf LdapConfig) {
 	ldapConn, err := ldap.DialURL(conf.Url, ldap.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}))
 	if err != nil {
 		panic(fmt.Sprintf("Init Ldap Connection Failed: %v", err))
-	}
-	err = ldapConn.Bind(conf.AdminDN, conf.AdminPass)
-	if err != nil {
-		panic(fmt.Sprintf("Bind Admin Account Failed: %v", err))
 	}
 
 	// Global variable assignment
@@ -160,10 +152,6 @@ func (lcp *LdapConnPool) nextRequestKeyLocked() uint64 {
 // initLDAPConn
 func initLDAPConn(conf LdapConfig) (*ldap.Conn, error) {
 	ldap, err := ldap.DialURL(conf.Url, ldap.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}))
-	if err != nil {
-		return nil, err
-	}
-	err = ldap.Bind(conf.AdminDN, conf.AdminPass)
 	if err != nil {
 		return nil, err
 	}
