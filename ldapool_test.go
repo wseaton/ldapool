@@ -9,11 +9,9 @@ import (
 
 func TestUseldapool(t *testing.T) {
 	ldapConf := LdapConfig{
-		Url:       "ldap://localhost:389",
-		BaseDN:    "dc=eryajf,dc=net",
-		AdminDN:   "cn=admin,dc=eryajf,dc=net",
-		AdminPass: "123456",
-		MaxOpen:   30,
+		Url:     "ldap://localhost:389",
+		BaseDN:  "dc=eryajf,dc=net",
+		MaxOpen: 30,
 	}
 
 	conn, err := Open(ldapConf)

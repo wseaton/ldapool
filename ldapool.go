@@ -12,17 +12,10 @@ import (
 
 // LdapConfig ldap conn config
 type LdapConfig struct {
-	// ldap server url. eg: ldap://localhost:389
-	Url string
-	// ldap server base DN. eg: dc=eryajf,dc=net
-	BaseDN string
-	// ldap server admin DN. eg: cn=admin,dc=eryajf,dc=net
+	Url     string
+	BaseDN  string
 	MaxOpen int
 }
-
-var ldapool *LdapConnPool
-var ldapInit = false
-var ldapInitOne sync.Once
 
 // Connection pool
 type LdapConnPool struct {
@@ -34,12 +27,20 @@ type LdapConnPool struct {
 	DsName   string
 }
 
+type LdapPoolManager struct {
+	ldapool     *LdapConnPool
+	ldapInit    bool
+	ldapInitOne sync.Once
+}
+
+var ldapManager = &LdapPoolManager{}
+
 func Open(conf LdapConfig) (*ldap.Conn, error) {
 	// Initialize the connection first
-	InitLDAP(conf)
+	ldapManager.InitLDAP(conf)
 	// Get LDAP connection
-	conn, err := GetLDAPConn(conf)
-	defer PutLADPConn(conn)
+	conn, err := ldapManager.GetLDAPConn(conf)
+	defer ldapManager.PutLDAPConn(conn)
 	if err != nil {
 		return nil, err
 	}
@@ -47,13 +48,13 @@ func Open(conf LdapConfig) (*ldap.Conn, error) {
 }
 
 // Initialize connection
-func InitLDAP(conf LdapConfig) {
-	if ldapInit {
+func (manager *LdapPoolManager) InitLDAP(conf LdapConfig) {
+	if manager.ldapInit {
 		return
 	}
 
-	ldapInitOne.Do(func() {
-		ldapInit = true
+	manager.ldapInitOne.Do(func() {
+		manager.ldapInit = true
 	})
 
 	ldapConn, err := ldap.DialURL(conf.Url, ldap.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}))
@@ -62,23 +63,23 @@ func InitLDAP(conf LdapConfig) {
 	}
 
 	// Global variable assignment
-	ldapool = &LdapConnPool{
+	manager.ldapool = &LdapConnPool{
 		conns:    make([]*ldap.Conn, 0),
 		reqConns: make(map[uint64]chan *ldap.Conn),
 		openConn: 0,
 		maxOpen:  conf.MaxOpen,
 	}
-	PutLADPConn(ldapConn)
+	manager.PutLDAPConn(ldapConn)
 }
 
 // GetLDAPConn Get LDAP connection
-func GetLDAPConn(conf LdapConfig) (*ldap.Conn, error) {
-	return ldapool.GetConnection(conf)
+func (manager *LdapPoolManager) GetLDAPConn(conf LdapConfig) (*ldap.Conn, error) {
+	return manager.ldapool.GetConnection(conf)
 }
 
 // PutLDAPConn Put back the LDAP connection
-func PutLADPConn(conn *ldap.Conn) {
-	ldapool.PutConnection(conn)
+func (manager *LdapPoolManager) PutLDAPConn(conn *ldap.Conn) {
+	manager.ldapool.PutConnection(conn)
 }
 
 // GetConnection
